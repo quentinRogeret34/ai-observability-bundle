@@ -15,12 +15,26 @@ use Symfony\Contracts\Service\ResetInterface;
  */
 final class SpanStack implements ResetInterface
 {
-    /** @var list<array{span: SpanInterface, conversationId: ?string}> */
+    /** @var list<array{span: SpanInterface, conversationId: ?string, agent: ?string}> */
     private array $entries = [];
 
-    public function push(SpanInterface $span, ?string $conversationId = null): void
+    public function push(SpanInterface $span, ?string $conversationId = null, ?string $agent = null): void
     {
-        $this->entries[] = ['span' => $span, 'conversationId' => $conversationId ?? $this->conversationId()];
+        $this->entries[] = ['span' => $span, 'conversationId' => $conversationId ?? $this->conversationId(), 'agent' => $agent];
+    }
+
+    /**
+     * The innermost run in progress of this agent.
+     */
+    public function agentSpan(string $agent): ?SpanInterface
+    {
+        for ($i = \count($this->entries) - 1; $i >= 0; --$i) {
+            if ($agent === $this->entries[$i]['agent']) {
+                return $this->entries[$i]['span'];
+            }
+        }
+
+        return null;
     }
 
     public function pop(SpanInterface $span): void

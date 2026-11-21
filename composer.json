@@ -1,18 +1,31 @@
 {
     "name": "quentinrogeret34/ai-observability-bundle",
-    "description": "OpenTelemetry GenAI tracing for Symfony AI: model calls, tool calls and agent runs exported over OTLP",
+    "description": "OpenTelemetry GenAI tracing and steering for Symfony AI: traces, model and prompt settings, A/B tests and user feedback",
     "type": "symfony-bundle",
     "license": "MIT",
-    "keywords": ["symfony", "ai", "llm", "opentelemetry", "observability", "otlp", "genai"],
+    "keywords": [
+        "symfony",
+        "ai",
+        "llm",
+        "opentelemetry",
+        "observability",
+        "otlp",
+        "genai",
+        "prompt-management",
+        "ab-testing"
+    ],
     "require": {
         "php": ">=8.2",
         "open-telemetry/api": "^1.0",
         "open-telemetry/exporter-otlp": "^1.0",
         "open-telemetry/sdk": "^1.0",
+        "psr/cache": "^2.0|^3.0",
+        "psr/log": "^2.0|^3.0",
         "symfony/ai-platform": "^1.0@beta",
         "symfony/config": "^7.3|^8.0",
         "symfony/dependency-injection": "^7.3|^8.0",
         "symfony/event-dispatcher": "^7.3|^8.0",
+        "symfony/http-client-contracts": "^3.5",
         "symfony/http-kernel": "^7.3|^8.0"
     },
     "require-dev": {
@@ -22,11 +35,13 @@
         "symfony/console": "^7.3|^8.0",
         "symfony/framework-bundle": "^7.3|^8.0",
         "symfony/http-client": "^7.3|^8.0",
-        "symfony/messenger": "^7.3|^8.0"
+        "symfony/messenger": "^7.3|^8.0",
+        "symfony/security-core": "^7.3|^8.0"
     },
     "suggest": {
         "symfony/ai-agent": "To trace agent runs and tool calls",
-        "symfony/http-client": "PSR-18 client used by the OTLP exporter, with nyholm/psr7"
+        "symfony/http-client": "PSR-18 client used by the OTLP exporter, with nyholm/psr7",
+        "symfony/security-core": "To fill user.id with the hashed identifier of the logged-in user"
     },
     "autoload": {
         "psr-4": {

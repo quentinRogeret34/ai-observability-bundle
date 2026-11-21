@@ -4,15 +4,20 @@ namespace AiObservability\Tests;
 
 use AiObservability\Agent\TracedAgent;
 use AiObservability\Tests\Fixtures\AvailabilityTool;
+use AiObservability\Tests\Fixtures\FixedUserIdResolver;
 use AiObservability\Tests\Fixtures\TestKernel;
 use OpenTelemetry\API\Trace\SpanKind;
 use OpenTelemetry\API\Trace\StatusCode;
 use OpenTelemetry\SDK\Trace\ImmutableSpan;
 use Symfony\AI\Agent\Agent;
+use Symfony\AI\Agent\InputProcessor\SystemPromptInputProcessor;
+use Symfony\AI\Agent\MessageStore\InMemoryMessageStore;
+use Symfony\AI\Agent\MessageStore\MessageStoreInterface;
 use Symfony\AI\Agent\Toolbox\Exception\ToolExecutionException;
 use Symfony\AI\Agent\Toolbox\Toolbox;
 use Symfony\AI\Platform\Message\Message;
 use Symfony\AI\Platform\Message\MessageBag;
+use Symfony\AI\Platform\Message\SystemMessage;
 use Symfony\AI\Platform\Platform;
 use Symfony\AI\Platform\Result\Stream\Delta\TextDelta;
 use Symfony\AI\Platform\Result\StreamResult;
@@ -217,6 +222,116 @@ final class TracingTest extends KernelTestCase
         self::assertNull($agentSpan->getAttributes()->get('ai_observability.experiment.id'));
     }
 
+    public function testAgentSettingsImposeModelPromptAndOptions(): void
+    {
+        self::bootKernel(['config' => ['capture_content' => true, 'agents' => ['booking' => [
+            'model' => 'gpt-steered',
+            'system_prompt' => 'You book hotel rooms in French.',
+            'prompt_version' => 'v3',
+            'options' => ['temperature' => 0.1],
+        ]]]]);
+
+        $this->agent($this->platform('Chambre 12.'), appPrompt: 'Prompt of the app.')->call('A room?')->getContent();
+
+        [$chat, $agentSpan] = $this->exportedSpans();
+        self::assertSame('chat gpt-steered', $chat->getName());
+        self::assertSame(0.1, $chat->getAttributes()->get('gen_ai.request.temperature'));
+        self::assertSame([['type' => 'text', 'content' => 'You book hotel rooms in French.']], json_decode($chat->getAttributes()->get('gen_ai.system_instructions'), true));
+        self::assertSame('v3', $agentSpan->getAttributes()->get('ai_observability.prompt.version'));
+        self::assertNull($agentSpan->getAttributes()->get('ai_observability.experiment.id'));
+    }
+
+    public function testVariantOverridesTheAgentSettings(): void
+    {
+        self::bootKernel(['config' => ['capture_content' => true,
+            'agents' => ['booking' => ['model' => 'gpt-steered', 'system_prompt' => 'Base prompt.', 'prompt_version' => 'v3']],
+            'experiments' => ['booking_model' => ['agent' => 'booking', 'variants' => [
+                'control' => ['weight' => 0],
+                'small' => ['model' => 'gpt-small'],
+            ]]],
+        ]]);
+
+        $this->agent($this->platform('Room 12.'))->call('A room?')->getContent();
+
+        [$chat, $agentSpan] = $this->exportedSpans();
+        self::assertSame('gpt-small', $chat->getAttributes()->get('gen_ai.request.model'));
+        self::assertSame([['type' => 'text', 'content' => 'Base prompt.']], json_decode($chat->getAttributes()->get('gen_ai.system_instructions'), true));
+        self::assertSame('v3', $agentSpan->getAttributes()->get('ai_observability.prompt.version'));
+        self::assertSame('small', $agentSpan->getAttributes()->get('ai_observability.experiment.variant'));
+    }
+
+    public function testImposedPromptIsNotSavedInTheMessageStore(): void
+    {
+        self::bootKernel(['config' => ['agents' => ['booking' => ['system_prompt' => 'Steered prompt.']]]]);
+        $store = new InMemoryMessageStore();
+        $agent = $this->agent($this->platform('Room 12 is free.'), $store);
+        $messages = new MessageBag(Message::ofUser('A room for tonight?'));
+
+        $agent->call($messages)->getContent();
+        $agent->call(MessageBag::forId($messages->getId(), Message::ofUser('And tomorrow?')))->getContent();
+
+        $stored = $store->load($messages->getId());
+        self::assertCount(4, $stored->getMessages());
+        self::assertSame([], array_filter($stored->getMessages(), static fn ($message): bool => $message instanceof SystemMessage));
+    }
+
+    public function testUserIdIsSetOnTheAgentSpan(): void
+    {
+        self::bootKernel();
+
+        $this->agent($this->platform('Room 12 is free.'))->call('A room?')->getContent();
+
+        [, $agentSpan] = $this->exportedSpans();
+        self::assertSame('user-42', $agentSpan->getAttributes()->get('user.id'));
+    }
+
+    public function testFeedbackBecomesAnEvaluationSpan(): void
+    {
+        self::bootKernel(['config' => ['capture_content' => true, 'user_id_resolver' => 'test.user_id_resolver']]);
+
+        self::getContainer()->get('test.feedback')->record('0190c3a4-8f1e-7d2a-9b3c-000000000001', 0.0, 'Wrong date.', 'wrong_answer');
+
+        $span = $this->singleSpan();
+        self::assertSame('evaluation user_feedback', $span->getName());
+        self::assertSame([
+            'gen_ai.operation.name' => 'evaluation',
+            'gen_ai.evaluation.name' => 'user_feedback',
+            'gen_ai.evaluation.score.value' => 0.0,
+            'gen_ai.conversation.id' => '0190c3a4-8f1e-7d2a-9b3c-000000000001',
+            'gen_ai.evaluation.score.label' => 'wrong_answer',
+            'gen_ai.evaluation.explanation' => 'Wrong date.',
+            'user.id' => 'user-42',
+        ], $span->getAttributes()->toArray());
+    }
+
+    public function testFeedbackCommentIsDroppedWithoutContentCapture(): void
+    {
+        self::bootKernel();
+
+        self::getContainer()->get('test.feedback')->record('0190c3a4-8f1e-7d2a-9b3c-000000000001', 1.0, 'Perfect.');
+
+        self::assertNull($this->singleSpan()->getAttributes()->get('gen_ai.evaluation.explanation'));
+    }
+
+    public function testFeedbackScoreOutOfRangeIsRejected(): void
+    {
+        self::bootKernel();
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        self::getContainer()->get('test.feedback')->record('0190c3a4-8f1e-7d2a-9b3c-000000000001', 5.0);
+    }
+
+    public function testSteeringProcessorIsRegisteredForEveryAgent(): void
+    {
+        self::bootKernel();
+
+        self::assertSame(
+            ['ai_observability.steering_input_processor' => [['priority' => 0]]],
+            self::getContainer()->getParameter('test.input_processors'),
+        );
+    }
+
     public function testAgentsDeclaredInTheContainerAreDecorated(): void
     {
         self::bootKernel();
@@ -237,22 +352,32 @@ final class TracingTest extends KernelTestCase
         return MockPlatformFactory::createPlatform($responses, eventDispatcher: self::getContainer()->get('event_dispatcher'));
     }
 
-    private function agent(Platform $platform): TracedAgent
+    /**
+     * The agent as symfony/ai-bundle builds it: the steering processor first, then the system prompt of the app.
+     */
+    private function agent(Platform $platform, ?MessageStoreInterface $messageStore = null, ?string $appPrompt = null): TracedAgent
     {
         $dispatcher = self::getContainer()->get('event_dispatcher');
+        $processors = [self::getContainer()->get('test.steering_input_processor')];
+        if (null !== $appPrompt) {
+            $processors[] = new SystemPromptInputProcessor($appPrompt);
+        }
+
         $agent = new Agent(
             $platform,
             'gpt-test',
+            inputProcessors: $processors,
             name: 'booking',
             toolbox: new Toolbox([new AvailabilityTool()], eventDispatcher: $dispatcher),
             eventDispatcher: $dispatcher,
+            messageStore: $messageStore,
         );
 
         return new TracedAgent(
             $agent,
             self::getContainer()->get('ai_observability.tracer'),
             self::getContainer()->get('ai_observability.span_stack'),
-            self::getContainer()->get('ai_observability.experiments'),
+            new FixedUserIdResolver(),
         );
     }
 

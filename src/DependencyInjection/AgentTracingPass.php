@@ -3,13 +3,16 @@
 namespace AiObservability\DependencyInjection;
 
 use AiObservability\Agent\TracedAgent;
+use AiObservability\User\SecurityUserIdResolver;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
 /**
- * Decorates every agent declared through symfony/ai-bundle with TracedAgent, which also applies its experiment.
+ * Decorates every agent declared through symfony/ai-bundle with TracedAgent, and fills user.id from the logged-in user
+ * when SecurityBundle is there and no other resolver was configured.
  */
 final class AgentTracingPass implements CompilerPassInterface
 {
@@ -19,6 +22,13 @@ final class AgentTracingPass implements CompilerPassInterface
             return;
         }
 
+        if (!$container->has('ai_observability.user_id_resolver') && $container->has('security.token_storage') && $container->hasParameter('kernel.secret')) {
+            $container->setDefinition('ai_observability.user_id_resolver', new Definition(SecurityUserIdResolver::class, [
+                new Reference('security.token_storage'),
+                '%kernel.secret%',
+            ]));
+        }
+
         foreach (array_keys($container->findTaggedServiceIds('ai.agent')) as $agent) {
             $container->setDefinition($agent.'.ai_observability', (new Definition(TracedAgent::class))
                 ->setDecoratedService($agent, priority: -2048)
@@ -26,7 +36,7 @@ final class AgentTracingPass implements CompilerPassInterface
                     new Reference('.inner'),
                     new Reference('ai_observability.tracer'),
                     new Reference('ai_observability.span_stack'),
-                    new Reference('ai_observability.experiments'),
+                    new Reference('ai_observability.user_id_resolver', ContainerInterface::NULL_ON_INVALID_REFERENCE),
                 ]));
         }
     }

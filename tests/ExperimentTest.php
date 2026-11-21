@@ -3,7 +3,7 @@
 namespace AiObservability\Tests;
 
 use AiObservability\Experiment\Experiment;
-use AiObservability\Experiment\Experiments;
+use AiObservability\Steering\SteeringConfig;
 use PHPUnit\Framework\TestCase;
 
 final class ExperimentTest extends TestCase
@@ -47,10 +47,10 @@ final class ExperimentTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
 
-        new Experiments([
+        SteeringConfig::fromArray(['experiments' => [
             'first' => ['agent' => 'booking', 'variants' => ['a' => ['system_prompt' => 'A', 'weight' => 1]]],
             'second' => ['agent' => 'booking', 'variants' => ['a' => ['system_prompt' => 'A', 'weight' => 1]]],
-        ]);
+        ]]);
     }
 
     /**
@@ -58,6 +58,6 @@ final class ExperimentTest extends TestCase
      */
     private function experiment(array $weights): Experiment
     {
-        return new Experiment('booking_prompt', 'booking', array_map(static fn (int $weight): array => ['system_prompt' => 'Prompt', 'weight' => $weight], $weights));
+        return Experiment::fromArray('booking_prompt', ['agent' => 'booking', 'variants' => array_map(static fn (int $weight): array => ['system_prompt' => 'Prompt', 'weight' => $weight], $weights)]);
     }
 }

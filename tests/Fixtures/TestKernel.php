@@ -4,11 +4,13 @@ namespace AiObservability\Tests\Fixtures;
 
 use AiObservability\AiObservabilityBundle;
 use OpenTelemetry\SDK\Trace\SpanExporter\InMemoryExporter;
-use Symfony\AI\Agent\MockAgent;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
+use Symfony\AI\Agent\MockAgent;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
+use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
+use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use Symfony\Component\HttpKernel\Kernel;
 
@@ -43,12 +45,30 @@ final class TestKernel extends Kernel
         return $this->getCacheDir().'/log';
     }
 
+    protected function build(ContainerBuilder $container): void
+    {
+        $container->addCompilerPass(new class implements CompilerPassInterface {
+            public function process(ContainerBuilder $container): void
+            {
+                $container->setParameter('test.input_processors', $container->findTaggedServiceIds('ai.agent.input_processor'));
+            }
+        });
+    }
+
     private function configureContainer(ContainerConfigurator $container): void
     {
         $container->extension('framework', ['test' => true, 'http_method_override' => false]);
         $container->extension('ai_observability', $this->bundleConfig + ['tracer_provider' => 'test.tracer_provider']);
 
-        $container->services()
+        $services = $container->services();
+
+        if ($this->bundleConfig['enabled'] ?? true) {
+            $services->alias('test.steering_input_processor', 'ai_observability.steering_input_processor')->public();
+            $services->alias('test.feedback', 'ai_observability.feedback')->public();
+        }
+
+        $services
+            ->set('test.user_id_resolver', FixedUserIdResolver::class)
             ->set('ai.agent.booking', MockAgent::class)->public()
                 ->args([[], 'booking'])
                 ->tag('ai.agent', ['name' => 'booking'])
