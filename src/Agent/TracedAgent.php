@@ -18,8 +18,8 @@ use Symfony\AI\Platform\Message\UserMessage;
 /**
  * Wraps an agent run in a GenAI invoke_agent span, parent of its model and tool spans.
  *
- * The input is turned into a message bag first, so every run has a conversation id. SteeringInputProcessor adds the
- * experiment and prompt version to the span once the agent picked them.
+ * The input is turned into a message bag first, so every run has a conversation id. The input processors of the agent
+ * find the span through SpanStack::agentSpan(), e.g. for ai-steering-bundle to add the experiment it picked.
  */
 final class TracedAgent implements AgentInterface
 {

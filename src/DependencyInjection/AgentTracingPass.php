@@ -3,6 +3,7 @@
 namespace AiObservability\DependencyInjection;
 
 use AiObservability\Agent\TracedAgent;
+use AiObservability\Profiler\TraceableTracer;
 use AiObservability\User\SecurityUserIdResolver;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -11,8 +12,8 @@ use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
 /**
- * Decorates every agent declared through symfony/ai-bundle with TracedAgent, and fills user.id from the logged-in user
- * when SecurityBundle is there and no other resolver was configured.
+ * Decorates every agent declared through symfony/ai-bundle with TracedAgent, fills user.id from the logged-in user
+ * when SecurityBundle is there and no other resolver was configured, and shows the spans in the profiler when it is on.
  */
 final class AgentTracingPass implements CompilerPassInterface
 {
@@ -27,6 +28,12 @@ final class AgentTracingPass implements CompilerPassInterface
                 new Reference('security.token_storage'),
                 '%kernel.secret%',
             ]));
+        }
+
+        if ($container->hasDefinition('profiler')) {
+            $container->setDefinition('ai_observability.tracer.traceable', (new Definition(TraceableTracer::class))
+                ->setDecoratedService('ai_observability.tracer')
+                ->setArguments([new Reference('.inner'), new Reference('ai_observability.data_collector')]));
         }
 
         foreach (array_keys($container->findTaggedServiceIds('ai.agent')) as $agent) {

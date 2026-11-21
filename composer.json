@@ -1,6 +1,6 @@
 {
     "name": "quentinrogeret34/ai-observability-bundle",
-    "description": "OpenTelemetry GenAI tracing and steering for Symfony AI: traces, model and prompt settings, A/B tests and user feedback",
+    "description": "OpenTelemetry GenAI tracing for Symfony AI: model calls, tool calls, agent runs and user feedback, with a profiler panel",
     "type": "symfony-bundle",
     "license": "MIT",
     "keywords": [
@@ -10,38 +10,38 @@
         "opentelemetry",
         "observability",
         "otlp",
-        "genai",
-        "prompt-management",
-        "ab-testing"
+        "genai"
     ],
     "require": {
         "php": ">=8.2",
+        "nyholm/psr7": "^1.8",
         "open-telemetry/api": "^1.0",
         "open-telemetry/exporter-otlp": "^1.0",
         "open-telemetry/sdk": "^1.0",
-        "psr/cache": "^2.0|^3.0",
-        "psr/log": "^2.0|^3.0",
         "symfony/ai-platform": "^1.0@beta",
         "symfony/config": "^7.3|^8.0",
         "symfony/dependency-injection": "^7.3|^8.0",
         "symfony/event-dispatcher": "^7.3|^8.0",
-        "symfony/http-client-contracts": "^3.5",
+        "symfony/http-client": "^7.3|^8.0",
         "symfony/http-kernel": "^7.3|^8.0"
     },
     "require-dev": {
-        "nyholm/psr7": "^1.8",
         "phpunit/phpunit": "^11.5",
         "symfony/ai-agent": "^1.0@beta",
+        "symfony/browser-kit": "^7.3|^8.0",
         "symfony/console": "^7.3|^8.0",
+        "symfony/css-selector": "^7.3|^8.0",
         "symfony/framework-bundle": "^7.3|^8.0",
-        "symfony/http-client": "^7.3|^8.0",
         "symfony/messenger": "^7.3|^8.0",
-        "symfony/security-core": "^7.3|^8.0"
+        "symfony/security-core": "^7.3|^8.0",
+        "symfony/twig-bundle": "^7.3|^8.0",
+        "symfony/web-profiler-bundle": "^7.3|^8.0"
     },
     "suggest": {
+        "quentinrogeret34/ai-steering-bundle": "To impose the model, system prompt and options of the agents and run A/B tests",
         "symfony/ai-agent": "To trace agent runs and tool calls",
-        "symfony/http-client": "PSR-18 client used by the OTLP exporter, with nyholm/psr7",
-        "symfony/security-core": "To fill user.id with the hashed identifier of the logged-in user"
+        "symfony/security-core": "To fill user.id with the hashed identifier of the logged-in user",
+        "symfony/web-profiler-bundle": "To see the spans of each request in the profiler"
     },
     "autoload": {
         "psr-4": {
