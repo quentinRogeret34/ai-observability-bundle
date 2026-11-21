@@ -1,0 +1,50 @@
+{
+    "name": "quentinrogeret34/ai-observability-bundle",
+    "description": "OpenTelemetry GenAI tracing for Symfony AI: model calls, tool calls and agent runs exported over OTLP",
+    "type": "symfony-bundle",
+    "license": "MIT",
+    "keywords": ["symfony", "ai", "llm", "opentelemetry", "observability", "otlp", "genai"],
+    "require": {
+        "php": ">=8.2",
+        "open-telemetry/api": "^1.0",
+        "open-telemetry/exporter-otlp": "^1.0",
+        "open-telemetry/sdk": "^1.0",
+        "symfony/ai-platform": "^1.0@beta",
+        "symfony/config": "^7.3|^8.0",
+        "symfony/dependency-injection": "^7.3|^8.0",
+        "symfony/event-dispatcher": "^7.3|^8.0",
+        "symfony/http-kernel": "^7.3|^8.0"
+    },
+    "require-dev": {
+        "nyholm/psr7": "^1.8",
+        "phpunit/phpunit": "^11.5",
+        "symfony/ai-agent": "^1.0@beta",
+        "symfony/console": "^7.3|^8.0",
+        "symfony/framework-bundle": "^7.3|^8.0",
+        "symfony/http-client": "^7.3|^8.0",
+        "symfony/messenger": "^7.3|^8.0"
+    },
+    "suggest": {
+        "symfony/ai-agent": "To trace agent runs and tool calls",
+        "symfony/http-client": "PSR-18 client used by the OTLP exporter, with nyholm/psr7"
+    },
+    "autoload": {
+        "psr-4": {
+            "AiObservability\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "AiObservability\\Tests\\": "tests/"
+        }
+    },
+    "minimum-stability": "beta",
+    "prefer-stable": true,
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "php-http/discovery": true,
+            "tbachert/spi": true
+        }
+    }
+}
