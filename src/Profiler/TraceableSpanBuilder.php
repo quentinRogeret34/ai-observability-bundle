@@ -23,6 +23,9 @@ final class TraceableSpanBuilder implements SpanBuilderInterface
         return $this;
     }
 
+    /**
+     * @param iterable<non-empty-string, mixed> $attributes
+     */
     public function addLink(SpanContextInterface $context, iterable $attributes = []): SpanBuilderInterface
     {
         $this->builder->addLink($context, $attributes);
@@ -37,6 +40,9 @@ final class TraceableSpanBuilder implements SpanBuilderInterface
         return $this;
     }
 
+    /**
+     * @param iterable<non-empty-string, mixed> $attributes
+     */
     public function setAttributes(iterable $attributes): SpanBuilderInterface
     {
         $this->builder->setAttributes($attributes);

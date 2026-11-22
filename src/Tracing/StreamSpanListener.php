@@ -5,6 +5,7 @@ namespace AiObservability\Tracing;
 use Symfony\AI\Platform\Result\Stream\AbstractStreamListener;
 use Symfony\AI\Platform\Result\Stream\CompleteEvent;
 use Symfony\AI\Platform\Result\Stream\Delta\TextDelta;
+use Symfony\AI\Platform\Result\Stream\Delta\ThinkingDelta;
 use Symfony\AI\Platform\Result\Stream\Delta\ToolCallComplete;
 use Symfony\AI\Platform\Result\Stream\DeltaEvent;
 use Symfony\AI\Platform\Result\Stream\ErrorEvent;
@@ -37,6 +38,8 @@ final class StreamSpanListener extends AbstractStreamListener
 
         if ($delta instanceof TextDelta) {
             $this->call->streamedText .= $delta->getText();
+        } elseif ($delta instanceof ThinkingDelta) {
+            $this->call->streamedThinking .= $delta->getThinking();
         } elseif ($delta instanceof ToolCallComplete) {
             foreach ($delta->getToolCalls() as $toolCall) {
                 $this->call->streamedToolCalls[] = $this->formatter->toolCall($toolCall);

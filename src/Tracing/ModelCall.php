@@ -11,6 +11,7 @@ final class ModelCall
 {
     public ?float $firstChunkAt = null;
     public string $streamedText = '';
+    public string $streamedThinking = '';
     /** @var list<array<string, mixed>> */
     public array $streamedToolCalls = [];
 

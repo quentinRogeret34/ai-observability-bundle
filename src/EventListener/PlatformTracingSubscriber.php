@@ -59,6 +59,9 @@ final class PlatformTracingSubscriber implements EventSubscriberInterface, Reset
      */
     private array $pending = [];
 
+    /** @var array<int, ModelCall> */
+    private array $streams = [];
+
     /** @var \WeakMap<ResultInterface, ModelCall> */
     private \WeakMap $converted;
 
@@ -70,6 +73,7 @@ final class PlatformTracingSubscriber implements EventSubscriberInterface, Reset
         private readonly SpanStack $stack,
         private readonly MessageFormatter $formatter,
         private readonly bool $captureContent = false,
+        private readonly int $maxContentLength = 65536,
     ) {
         $this->converted = new \WeakMap();
         $this->failed = new \WeakMap();
@@ -162,6 +166,7 @@ final class PlatformTracingSubscriber implements EventSubscriberInterface, Reset
         $this->setProvider($call->span, $event->getProvider(), $event->getModel());
 
         if ($result instanceof StreamResult) {
+            $this->streams[spl_object_id($call)] = $call;
             $result->addListener(new StreamSpanListener($call, $this->formatter, $this->completeStream(...), $this->fail(...)));
 
             return;
@@ -199,24 +204,37 @@ final class PlatformTracingSubscriber implements EventSubscriberInterface, Reset
             $call->span->end();
         }
 
+        foreach ($this->streams as $call) {
+            $call->span->setAttribute('error.type', 'stream_abandoned');
+            $call->span->setStatus(StatusCode::STATUS_ERROR, 'The model stream was not drained before reset.');
+            $call->span->end();
+        }
+
         $this->pending = [];
+        $this->streams = [];
     }
 
     private function completeStream(ModelCall $call, StreamResult $result): void
     {
+        unset($this->streams[spl_object_id($call)]);
+
         if (null !== $call->firstChunkAt) {
             $call->span->setAttribute('gen_ai.response.time_to_first_chunk', $call->firstChunkAt - $call->startedAt);
         }
 
         $this->setUsage($call->span, $result->getMetadata()->get('token_usage'));
+        $finishReason = $this->setResponse($call->span, $result);
 
         if ($this->captureContent) {
             $parts = $call->streamedToolCalls;
             if ('' !== $call->streamedText) {
                 array_unshift($parts, ['type' => 'text', 'content' => $call->streamedText]);
             }
+            if ('' !== $call->streamedThinking) {
+                array_unshift($parts, ['type' => 'reasoning', 'content' => $call->streamedThinking]);
+            }
 
-            $this->setJson($call->span, 'gen_ai.output.messages', $this->formatter->assistantMessage($parts));
+            $this->setJson($call->span, 'gen_ai.output.messages', $this->formatter->assistantMessage($parts, $finishReason));
         }
 
         $call->span->end();
@@ -224,6 +242,7 @@ final class PlatformTracingSubscriber implements EventSubscriberInterface, Reset
 
     private function fail(ModelCall $call, \Throwable $error): void
     {
+        unset($this->streams[spl_object_id($call)]);
         $call->span->recordException($error);
         $call->span->setAttribute('error.type', $error::class);
         $call->span->setStatus(StatusCode::STATUS_ERROR, $error->getMessage());
@@ -245,7 +264,12 @@ final class PlatformTracingSubscriber implements EventSubscriberInterface, Reset
 
     private function setProvider(SpanInterface $span, ?ProviderInterface $provider, Model $model): void
     {
-        $name = $provider?->getName() ?? strtolower(explode('\\', $model::class)[4] ?? 'unknown');
+        $name = $provider?->getName();
+        if (null === $name) {
+            $segments = explode('\\', $model::class);
+            $bridgeIndex = array_search('Bridge', $segments, true);
+            $name = false !== $bridgeIndex && isset($segments[$bridgeIndex + 1]) ? strtolower($segments[$bridgeIndex + 1]) : 'unknown';
+        }
 
         $span->setAttribute('gen_ai.provider.name', self::PROVIDER_NAMES[$name] ?? $name);
     }
@@ -311,7 +335,29 @@ final class PlatformTracingSubscriber implements EventSubscriberInterface, Reset
     private function setJson(SpanInterface|SpanBuilderInterface $target, string $attribute, array $value): void
     {
         if ([] !== $value) {
+            if ($this->maxContentLength > 0) {
+                $value = $this->truncateStrings($value);
+            }
+
             $target->setAttribute($attribute, json_encode($value, \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_INVALID_UTF8_SUBSTITUTE));
         }
+    }
+
+    /**
+     * @param array<mixed> $data
+     *
+     * @return array<mixed>
+     */
+    private function truncateStrings(array $data): array
+    {
+        foreach ($data as $key => $value) {
+            if (\is_string($value) && mb_strlen($value) > $this->maxContentLength) {
+                $data[$key] = mb_substr($value, 0, $this->maxContentLength).'... [truncated]';
+            } elseif (\is_array($value)) {
+                $data[$key] = $this->truncateStrings($value);
+            }
+        }
+
+        return $data;
     }
 }

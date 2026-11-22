@@ -30,8 +30,16 @@ final readonly class Feedback
      */
     public function record(string $conversationId, float $score, ?string $comment = null, ?string $label = null, string $name = self::USER_FEEDBACK): void
     {
-        if ($score < 0 || $score > 1) {
-            throw new \InvalidArgumentException(\sprintf('The feedback score must be between 0 and 1, %s given.', $score));
+        if ('' === trim($conversationId)) {
+            throw new \InvalidArgumentException('The conversation id must not be empty.');
+        }
+
+        if ('' === trim($name)) {
+            throw new \InvalidArgumentException('The evaluation name must not be empty.');
+        }
+
+        if (!is_finite($score) || $score < 0 || $score > 1) {
+            throw new \InvalidArgumentException(\sprintf('The feedback score must be between 0 and 1, %s given.', is_nan($score) ? 'NAN' : (string) $score));
         }
 
         $builder = $this->tracer->spanBuilder('evaluation '.$name)

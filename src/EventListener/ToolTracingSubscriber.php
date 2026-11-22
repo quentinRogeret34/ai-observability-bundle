@@ -25,6 +25,7 @@ final class ToolTracingSubscriber implements EventSubscriberInterface, ResetInte
         private readonly TracerInterface $tracer,
         private readonly SpanStack $stack,
         private readonly bool $captureContent = false,
+        private readonly int $maxContentLength = 65536,
     ) {
     }
 
@@ -131,12 +132,42 @@ final class ToolTracingSubscriber implements EventSubscriberInterface, ResetInte
     private function setResult(SpanInterface $span, mixed $result): void
     {
         if ($this->captureContent && null !== $result) {
-            $span->setAttribute('gen_ai.tool.call.result', \is_string($result) ? $result : $this->json($result));
+            $span->setAttribute('gen_ai.tool.call.result', \is_string($result) ? $this->truncate($result) : $this->json($result));
         }
     }
 
     private function json(mixed $value): string
     {
-        return json_encode($value, \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR) ?: '';
+        if ($this->maxContentLength > 0) {
+            $value = $this->truncateValue($value);
+        }
+
+        $encoded = json_encode($value, \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR) ?: '';
+
+        return $this->truncate($encoded);
+    }
+
+    private function truncate(string $value): string
+    {
+        if ($this->maxContentLength <= 0 || mb_strlen($value) <= $this->maxContentLength) {
+            return $value;
+        }
+
+        return mb_substr($value, 0, $this->maxContentLength).'... [truncated]';
+    }
+
+    private function truncateValue(mixed $value): mixed
+    {
+        if (\is_string($value)) {
+            return $this->truncate($value);
+        }
+
+        if (\is_array($value)) {
+            foreach ($value as $key => $item) {
+                $value[$key] = $this->truncateValue($item);
+            }
+        }
+
+        return $value;
     }
 }

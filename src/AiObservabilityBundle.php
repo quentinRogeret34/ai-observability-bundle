@@ -32,6 +32,11 @@ final class AiObservabilityBundle extends AbstractBundle
                     ->info('Records prompts, responses and tool arguments (gen_ai.input.messages, gen_ai.output.messages...). Opt-in, as they may hold personal data.')
                     ->defaultFalse()
                 ->end()
+                ->integerNode('max_content_length')
+                    ->info('Maximum character length per captured content string when capture_content is enabled (0 for unlimited).')
+                    ->defaultValue(65536)
+                    ->min(0)
+                ->end()
                 ->scalarNode('tracer_provider')
                     ->info('Id of an OpenTelemetry TracerProviderInterface service to reuse. By default one is built from the OTEL_* environment variables.')
                     ->defaultNull()
@@ -53,7 +58,7 @@ final class AiObservabilityBundle extends AbstractBundle
     }
 
     /**
-     * @param array{enabled: bool, capture_content: bool, tracer_provider: ?string, trace_url: ?string, user_id_resolver: ?string} $config
+     * @param array{enabled: bool, capture_content: bool, max_content_length: int, tracer_provider: ?string, trace_url: ?string, user_id_resolver: ?string} $config
      */
     public function loadExtension(array $config, ContainerConfigurator $container, ContainerBuilder $builder): void
     {
@@ -98,6 +103,7 @@ final class AiObservabilityBundle extends AbstractBundle
                 service('ai_observability.span_stack'),
                 service('ai_observability.message_formatter'),
                 $config['capture_content'],
+                $config['max_content_length'],
             ])
             ->tag('kernel.event_subscriber')
             ->tag('kernel.reset', ['method' => 'reset']);
@@ -108,17 +114,23 @@ final class AiObservabilityBundle extends AbstractBundle
                     service('ai_observability.tracer'),
                     service('ai_observability.span_stack'),
                     $config['capture_content'],
+                    $config['max_content_length'],
                 ])
                 ->tag('kernel.event_subscriber')
                 ->tag('kernel.reset', ['method' => 'reset']);
         }
 
         $services->set('ai_observability.flush_subscriber', FlushSubscriber::class)
-            ->args([service('ai_observability.tracer_provider')])
+            ->args([
+                service('ai_observability.tracer_provider'),
+                service('logger')->nullOnInvalid(),
+            ])
+            ->tag('monolog.logger', ['channel' => 'ai_observability'])
             ->tag('kernel.event_subscriber');
 
         $services->set('ai_observability.data_collector', TracingDataCollector::class)
             ->args([$config['trace_url']])
-            ->tag('data_collector', ['id' => TracingDataCollector::NAME, 'template' => TracingDataCollector::TEMPLATE]);
+            ->tag('data_collector', ['id' => TracingDataCollector::NAME, 'template' => TracingDataCollector::TEMPLATE])
+            ->tag('kernel.reset', ['method' => 'reset']);
     }
 }

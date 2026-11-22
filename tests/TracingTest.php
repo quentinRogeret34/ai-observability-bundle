@@ -3,6 +3,7 @@
 namespace AiObservability\Tests;
 
 use AiObservability\Agent\TracedAgent;
+use AiObservability\EventListener\FlushSubscriber;
 use AiObservability\Tests\Fixtures\AvailabilityTool;
 use AiObservability\Tests\Fixtures\FixedUserIdResolver;
 use AiObservability\Tests\Fixtures\TestKernel;
@@ -10,6 +11,7 @@ use AiObservability\User\SecurityUserIdResolver;
 use OpenTelemetry\API\Trace\SpanKind;
 use OpenTelemetry\API\Trace\StatusCode;
 use OpenTelemetry\SDK\Trace\ImmutableSpan;
+use OpenTelemetry\SDK\Trace\TracerProviderInterface as SdkTracerProviderInterface;
 use Symfony\AI\Agent\Agent;
 use Symfony\AI\Agent\Toolbox\Exception\ToolExecutionException;
 use Symfony\AI\Agent\Toolbox\Toolbox;
@@ -17,6 +19,7 @@ use Symfony\AI\Platform\Message\Message;
 use Symfony\AI\Platform\Message\MessageBag;
 use Symfony\AI\Platform\Platform;
 use Symfony\AI\Platform\Result\Stream\Delta\TextDelta;
+use Symfony\AI\Platform\Result\Stream\Delta\ThinkingDelta;
 use Symfony\AI\Platform\Result\StreamResult;
 use Symfony\AI\Platform\Result\TextResult;
 use Symfony\AI\Platform\Result\ToolCall;
@@ -84,6 +87,7 @@ final class TracingTest extends KernelTestCase
         self::bootKernel(['config' => ['capture_content' => true]]);
 
         $result = $this->platform(static fn (): StreamResult => new StreamResult((static function (): \Generator {
+            yield new ThinkingDelta('Checking rooms.');
             yield new TextDelta('Room 12 ');
             yield new TextDelta('is free.');
             yield new TokenUsage(promptTokens: 10, completionTokens: 4);
@@ -98,7 +102,48 @@ final class TracingTest extends KernelTestCase
         self::assertSame(10, $attributes->get('gen_ai.usage.input_tokens'));
         self::assertSame(4, $attributes->get('gen_ai.usage.output_tokens'));
         self::assertIsFloat($attributes->get('gen_ai.response.time_to_first_chunk'));
-        self::assertSame([['role' => 'assistant', 'parts' => [['type' => 'text', 'content' => 'Room 12 is free.']]]], json_decode($attributes->get('gen_ai.output.messages'), true));
+        self::assertSame([[
+            'role' => 'assistant',
+            'parts' => [
+                ['type' => 'reasoning', 'content' => 'Checking rooms.'],
+                ['type' => 'text', 'content' => 'Room 12 is free.'],
+            ],
+        ]], json_decode($attributes->get('gen_ai.output.messages'), true));
+    }
+
+    public function testAbandonedStreamIsEndedOnReset(): void
+    {
+        self::bootKernel();
+
+        $stream = $this->platform(static fn (): StreamResult => new StreamResult((static function (): \Generator {
+            yield new TextDelta('Partial');
+            yield new TextDelta('Never read');
+        })()))->invoke('gpt-test', new MessageBag(Message::ofUser('A room?')), ['stream' => true])->asStream();
+
+        $stream->rewind();
+        self::assertInstanceOf(TextDelta::class, $stream->current());
+        self::assertSame([], $this->exportedSpans());
+
+        self::getContainer()->get('services_resetter')->reset();
+
+        $span = $this->singleSpan();
+        self::assertSame(StatusCode::STATUS_ERROR, $span->getStatus()->getCode());
+        self::assertSame('stream_abandoned', $span->getAttributes()->get('error.type'));
+    }
+
+    public function testCapturedContentIsTruncatedToMaxContentLength(): void
+    {
+        self::bootKernel(['config' => ['capture_content' => true, 'max_content_length' => 10]]);
+
+        $this->platform('This answer is much longer than ten characters.')
+            ->invoke('gpt-test', new MessageBag(Message::ofUser('A very long user prompt indeed.')))
+            ->asText();
+
+        $attributes = $this->singleSpan()->getAttributes();
+        $input = json_decode($attributes->get('gen_ai.input.messages'), true);
+        $output = json_decode($attributes->get('gen_ai.output.messages'), true);
+        self::assertSame('A very lon... [truncated]', $input[0]['parts'][0]['content']);
+        self::assertSame('This answe... [truncated]', $output[0]['parts'][0]['content']);
     }
 
     public function testCallFailingBeforeTheModelAnswersIsEndedOnReset(): void
@@ -224,6 +269,24 @@ final class TracingTest extends KernelTestCase
         self::getContainer()->get('test.feedback')->record('0190c3a4-8f1e-7d2a-9b3c-000000000001', 5.0);
     }
 
+    public function testFeedbackNanScoreIsRejected(): void
+    {
+        self::bootKernel();
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        self::getContainer()->get('test.feedback')->record('0190c3a4-8f1e-7d2a-9b3c-000000000001', \NAN);
+    }
+
+    public function testFeedbackEmptyConversationIdIsRejected(): void
+    {
+        self::bootKernel();
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        self::getContainer()->get('test.feedback')->record('', 1.0);
+    }
+
     public function testUserIdIsAHashOfTheIdentifier(): void
     {
         $storage = new TokenStorage();
@@ -234,6 +297,15 @@ final class TracingTest extends KernelTestCase
         $storage->setToken(new UsernamePasswordToken(new InMemoryUser('alice@example.com', null), 'main'));
 
         self::assertSame(substr(hash_hmac('sha256', 'alice@example.com', 'kernel-secret'), 0, 32), $resolver->resolve());
+        self::assertNull((new SecurityUserIdResolver($storage, ''))->resolve());
+    }
+
+    public function testFlushSubscriberSwallowsExporterErrors(): void
+    {
+        $provider = $this->createMock(SdkTracerProviderInterface::class);
+        $provider->expects(self::once())->method('forceFlush')->willThrowException(new \RuntimeException('OTLP unreachable'));
+
+        (new FlushSubscriber($provider))->flush();
     }
 
     public function testAgentsDeclaredInTheContainerAreDecorated(): void

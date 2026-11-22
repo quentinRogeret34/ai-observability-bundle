@@ -47,6 +47,8 @@ ai_observability:
     enabled: true
     # Records prompts, responses and tool arguments. Off by default: they may hold personal data.
     capture_content: false
+    # Maximum characters kept per captured content string when capture_content is enabled (0 for unlimited).
+    max_content_length: 65536
     # Reuse the TracerProvider of an existing OpenTelemetry setup instead of building one from OTEL_* variables.
     tracer_provider: null
     # Url of a trace in the tracing backend, linked from the profiler.

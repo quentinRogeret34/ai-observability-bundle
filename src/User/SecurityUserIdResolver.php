@@ -18,6 +18,10 @@ final readonly class SecurityUserIdResolver implements UserIdResolverInterface
 
     public function resolve(): ?string
     {
+        if ('' === $this->secret) {
+            return null;
+        }
+
         $identifier = $this->tokenStorage?->getToken()?->getUserIdentifier();
 
         return null === $identifier || '' === $identifier ? null : substr(hash_hmac('sha256', $identifier, $this->secret), 0, 32);
