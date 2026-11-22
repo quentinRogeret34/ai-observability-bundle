@@ -2,6 +2,7 @@
 
 namespace AiObservability;
 
+use AiObservability\Agent\AgentTracer;
 use AiObservability\DependencyInjection\AgentTracingPass;
 use AiObservability\EventListener\FlushSubscriber;
 use AiObservability\EventListener\PlatformTracingSubscriber;
@@ -13,6 +14,7 @@ use AiObservability\Tracing\SpanStack;
 use OpenTelemetry\API\Trace\TracerInterface;
 use OpenTelemetry\API\Trace\TracerProviderInterface;
 use OpenTelemetry\SDK\Trace\TracerProviderFactory;
+use Symfony\AI\Agent\AgentInterface;
 use Symfony\AI\Agent\Toolbox\Event\ToolCallRequested;
 use Symfony\Component\Config\Definition\Configurator\DefinitionConfigurator;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -96,6 +98,16 @@ final class AiObservabilityBundle extends AbstractBundle
                 service('ai_observability.user_id_resolver')->nullOnInvalid(),
             ]);
         $services->alias(Feedback::class, 'ai_observability.feedback');
+
+        if (interface_exists(AgentInterface::class)) {
+            $services->set('ai_observability.agent_tracer', AgentTracer::class)
+                ->args([
+                    service('ai_observability.tracer'),
+                    service('ai_observability.span_stack'),
+                    service('ai_observability.user_id_resolver')->nullOnInvalid(),
+                ]);
+            $services->alias(AgentTracer::class, 'ai_observability.agent_tracer');
+        }
 
         $services->set('ai_observability.platform_subscriber', PlatformTracingSubscriber::class)
             ->args([

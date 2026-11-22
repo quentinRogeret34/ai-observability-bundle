@@ -84,6 +84,7 @@ final class TestKernel extends Kernel
 
         if ($this->bundleConfig['enabled'] ?? true) {
             $services->alias('test.feedback', 'ai_observability.feedback')->public();
+            $services->alias('test.agent_tracer', 'ai_observability.agent_tracer')->public();
         }
 
         $services

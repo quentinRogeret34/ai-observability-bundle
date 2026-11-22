@@ -2,6 +2,7 @@
 
 namespace AiObservability\Tests;
 
+use AiObservability\Agent\AgentTracer;
 use AiObservability\Agent\TracedAgent;
 use AiObservability\EventListener\FlushSubscriber;
 use AiObservability\Tests\Fixtures\AvailabilityTool;
@@ -15,6 +16,7 @@ use OpenTelemetry\SDK\Trace\TracerProviderInterface as SdkTracerProviderInterfac
 use Symfony\AI\Agent\Agent;
 use Symfony\AI\Agent\Toolbox\Exception\ToolExecutionException;
 use Symfony\AI\Agent\Toolbox\Toolbox;
+use Symfony\AI\Platform\Event\InvocationEvent;
 use Symfony\AI\Platform\Message\Message;
 use Symfony\AI\Platform\Message\MessageBag;
 use Symfony\AI\Platform\Platform;
@@ -306,6 +308,42 @@ final class TracingTest extends KernelTestCase
         $provider->expects(self::once())->method('forceFlush')->willThrowException(new \RuntimeException('OTLP unreachable'));
 
         (new FlushSubscriber($provider))->flush();
+    }
+
+    public function testOriginalConversationIdSurvivesInputReplacement(): void
+    {
+        self::bootKernel();
+        $dispatcher = self::getContainer()->get('event_dispatcher');
+        // Mirrors Symfony AI's TemplateRendererListener, which replaces the input with a fresh MessageBag at priority 0.
+        $dispatcher->addListener(InvocationEvent::class, static function (InvocationEvent $event): void {
+            $input = $event->getInput();
+            if ($input instanceof MessageBag) {
+                $event->setInput(new MessageBag(...$input->getMessages()));
+            }
+        }, 0);
+
+        $messages = new MessageBag(Message::ofUser('A room?'));
+        $this->platform('Room 12 is free.')->invoke('gpt-test', $messages)->asText();
+
+        self::assertSame($messages->getId()->toRfc4122(), $this->singleSpan()->getAttributes()->get('gen_ai.conversation.id'));
+    }
+
+    public function testAgentTracerWrapsManuallyBuiltAgents(): void
+    {
+        self::bootKernel();
+        /** @var AgentTracer $agentTracer */
+        $agentTracer = self::getContainer()->get('test.agent_tracer');
+        $agent = new Agent($this->platform('Room 12 is free.'), 'gpt-test', name: 'runtime');
+
+        $traced = $agentTracer->trace($agent);
+        self::assertInstanceOf(TracedAgent::class, $traced);
+        self::assertSame($traced, $agentTracer->trace($traced));
+
+        $traced->call('Hello')->getContent();
+        [$chat, $agentSpan] = $this->exportedSpans();
+        self::assertSame('invoke_agent runtime', $agentSpan->getName());
+        self::assertSame($agentSpan->getSpanId(), $chat->getParentSpanId());
+        self::assertSame($agentSpan->getAttributes()->get('gen_ai.conversation.id'), $chat->getAttributes()->get('gen_ai.conversation.id'));
     }
 
     public function testAgentsDeclaredInTheContainerAreDecorated(): void

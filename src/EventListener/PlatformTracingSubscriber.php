@@ -68,6 +68,13 @@ final class PlatformTracingSubscriber implements EventSubscriberInterface, Reset
     /** @var \WeakMap<\Throwable, ModelCall> */
     private \WeakMap $failed;
 
+    /**
+     * Original MessageBag ids captured before listeners like TemplateRendererListener replace the input MessageBag.
+     *
+     * @var \WeakMap<InvocationEvent, string>
+     */
+    private \WeakMap $conversationIds;
+
     public function __construct(
         private readonly TracerInterface $tracer,
         private readonly SpanStack $stack,
@@ -77,16 +84,28 @@ final class PlatformTracingSubscriber implements EventSubscriberInterface, Reset
     ) {
         $this->converted = new \WeakMap();
         $this->failed = new \WeakMap();
+        $this->conversationIds = new \WeakMap();
     }
 
     public static function getSubscribedEvents(): array
     {
         return [
-            InvocationEvent::class => ['onInvocation', -1024],
+            InvocationEvent::class => [
+                ['captureConversationId', 1024],
+                ['onInvocation', -1024],
+            ],
             ResultEvent::class => ['onResult', -1024],
             ResultConvertedEvent::class => ['onResultConverted', 1024],
             ResultErrorEvent::class => ['onResultError', 1024],
         ];
+    }
+
+    public function captureConversationId(InvocationEvent $event): void
+    {
+        $input = $event->getInput();
+        if ($input instanceof MessageBag) {
+            $this->conversationIds[$event] = $input->getId()->toRfc4122();
+        }
     }
 
     public function onInvocation(InvocationEvent $event): void
@@ -120,7 +139,11 @@ final class PlatformTracingSubscriber implements EventSubscriberInterface, Reset
             $builder->setAttribute('gen_ai.output.type', 'json');
         }
 
-        $conversationId = $input instanceof MessageBag ? $input->getId()->toRfc4122() : $this->stack->conversationId();
+        $capturedId = $this->conversationIds[$event] ?? null;
+        unset($this->conversationIds[$event]);
+        $conversationId = $this->stack->conversationId()
+            ?? $capturedId
+            ?? ($input instanceof MessageBag ? $input->getId()->toRfc4122() : null);
         if (null !== $conversationId) {
             $builder->setAttribute('gen_ai.conversation.id', $conversationId);
         }
